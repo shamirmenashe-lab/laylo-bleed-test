@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>בדיקת זליגה פנימית - Laylo</title>
+<style>
+  /* ============================================================
+     TEMPORARY TEST HARNESS - NOT PART OF LAYLO PRODUCT
+     Purpose: verify whether internal DAC-to-ADC bleed is a fixed,
+     repeatable transfer function (same guide played twice while
+     recording "silence" -> compare the two captures).
+     Safe to delete entirely once the experiment concludes.
+     ============================================================ */
+  body {
+    font-family: -apple-system, system-ui, sans-serif;
+    background: #14161a;
+    color: #eaeaea;
+    margin: 0;
+    padding: 16px;
+    line-height: 1.5;
+  }
+  .banner {
+    background: #4a2e00;
+    border: 1px solid #b8860b;
+    color: #ffd27a;
+    padding: 10px 14px;
+    border-radius: 8px;
+    font-size: 13px;
+    margin-bottom: 16px;
+  }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  h2 { font-size: 15px; color: #9fd3ff; margin: 24px 0 8px; }
+  .step {
+    background: #1f2228;
+    border: 1px solid #2c303a;
+    border-radius: 10px;
+    padding: 14px;
+    margin-bottom: 12px;
+  }
+  .step.disabled { opacity: 0.4; pointer-events: none; }
+  button {
+    background: #2d6cdf;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    padding: 12px 18px;
+    font-size: 15px;
+    width: 100%;
+    margin-top: 8px;
+  }
+  button:disabled { background: #3a3d44; color: #888; }
+  input[type=file] { color: #eaeaea; width: 100%; }
+  .status { font-size: 13px; color: #9fd3ff; margin-top: 6px; min-height: 18px; }
+  .result {
+    background: #0e2417;
+    border: 1px solid #1f7a45;
+    border-radius: 8px;
+    padding: 12px;
+    margin-top: 10px;
+    font-size: 14px;
+  }
+  .result.bad { background: #2a1414; border-color: #7a1f1f; }
+  audio { width: 100%; margin-top: 8px; }
+  .metric { font-weight: bold; font-size: 18px; }
+</style>
+</head>
+<body>
+
+<div class="banner">
+  🧪 כלי בדיקה זמני - לא חלק מהמוצר. מטרתו לבדוק אם הזליגה הפנימית עקבית. אפשר למחוק בסיום הניסוי.
+</div>
+
+<h1>בדיקת זליגה פנימית - Laylo</h1>
+<div class="status" id="globalStatus">שלב 1: טען קובץ גייד</div>
+
+<div class="step" id="step1">
+  <h2>1. טעינת קובץ הגייד (מה שמתנגן באוזניות)</h2>
+  <input type="file" id="guideFile" accept="audio/*">
+  <div class="status" id="loadStatus"></div>
+</div>
+
+<div class="step disabled" id="step2">
+  <h2>2. אישור מיקרופון</h2>
+  <p style="font-size:13px;color:#aaa">חייב לאשר מיקרופון לפני שמנגנים כל שמע (חוק קשיח של Laylo).</p>
+  <button id="micBtn">אפשר מיקרופון</button>
+  <div class="status" id="micStatus"></div>
+</div>
+
+<div class="step disabled" id="step3">
+  <h2>3. הקלטה 1 - שקט מוחלט</h2>
+  <p style="font-size:13px;color:#aaa">שים אוזניות, לחץ הקלטה, אל תנגן/תדבר כלום עד שהגייד נגמר.</p>
+  <button id="rec1Btn">התחל הקלטה 1</button>
+  <div class="status" id="rec1Status"></div>
+  <audio id="rec1Audio" controls style="display:none"></audio>
+</div>
+
+<div class="step disabled" id="step4">
+  <h2>4. הקלטה 2 - אותו דבר בדיוק</h2>
+  <button id="rec2Btn">התחל הקלטה 2</button>
+  <div class="status" id="rec2Status"></div>
+  <audio id="rec2Audio" controls style="display:none"></audio>
+</div>
+
+<div class="step disabled" id="step5">
+  <h2>5. ניתוח - האם הזליגה עקבית?</h2>
+  <button id="analyzeBtn">נתח את שתי ההקלטות</button>
+  <div id="analysisResult"></div>
+</div>
+
+<script>
+/* ------------------------------------------------------------
+   TEMPORARY TEST HARNESS CODE
+   Hard rules respected:
+   - getUserMedia called before any audio output
+   - guide plays through <audio> element only (never WebAudio) during recording
+   - all analysis/DSP happens OFFLINE after MediaRecorder stops
+   - DEV_RESET / no dev flags needed here (standalone test, not shipped code)
+   ------------------------------------------------------------ */
+
+let guideArrayBuffer = null;
+let guideObjectUrl = null;
+let micStream = null;
+let recordings = { 1: null, 2: null };
+
+const $ = id => document.getElementById(id);
+
+// ---- Step 1: load guide file ----
+$('guideFile').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  guideArrayBuffer = await file.arrayBuffer();
+  guideObjectUrl = URL.createObjectURL(file);
+  $('loadStatus').textContent = `נטען: ${file.name}`;
+  $('step2').classList.remove('disabled');
+  $('globalStatus').textContent = 'שלב 2: אשר מיקרופון';
+});
+
+// ---- Step 2: request mic BEFORE any playback (hard rule) ----
+$('micBtn').addEventListener('click', async () => {
+  try {
+    micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    $('micStatus').textContent = 'מיקרופון אושר ✓';
+    $('step3').classList.remove('disabled');
+    $('globalStatus').textContent = 'שלב 3: הקלטה 1 (שקט)';
+  } catch (err) {
+    $('micStatus').textContent = 'שגיאה: ' + err.message;
+  }
+});
+
+// ---- Helper: play guide via <audio> element + record mic simultaneously ----
+function runTake(takeNumber, statusEl, audioEl, doneCallback) {
+  const guideAudioEl = new Audio(guideObjectUrl); // <audio> element, per hard rule
+  const chunks = [];
+  const recorder = new MediaRecorder(micStream);
+
+  recorder.ondataavailable = e => chunks.push(e.data);
+  recorder.onstop = async () => {
+    const blob = new Blob(chunks, { type: chunks[0]?.type || 'audio/webm' });
+    recordings[takeNumber] = await blob.arrayBuffer();
+    audioEl.src = URL.createObjectURL(blob);
+    audioEl.style.display = 'block';
+    statusEl.textContent = `הקלטה ${takeNumber} הושלמה ✓`;
+    doneCallback();
+  };
+
+  guideAudioEl.onended = () => recorder.stop();
+  guideAudioEl.onerror = () => {
+    statusEl.textContent = 'שגיאה בטעינת הגייד';
+    recorder.stop();
+  };
+
+  statusEl.textContent = `מקליט... (מנגן גייד)`;
+  recorder.start();
+  guideAudioEl.play().catch(err => {
+    statusEl.textContent = 'שגיאת ניגון: ' + err.message;
+    recorder.stop();
+  });
+}
+
+$('rec1Btn').addEventListener('click', () => {
+  $('rec1Btn').disabled = true;
+  runTake(1, $('rec1Status'), $('rec1Audio'), () => {
+    $('step4').classList.remove('disabled');
+    $('globalStatus').textContent = 'שלב 4: הקלטה 2 (שקט)';
+  });
+});
+
+$('rec2Btn').addEventListener('click', () => {
+  $('rec2Btn').disabled = true;
+  runTake(2, $('rec2Status'), $('rec2Audio'), () => {
+    $('step5').classList.remove('disabled');
+    $('globalStatus').textContent = 'שלב 5: ניתוח';
+  });
+});
+
+// ---- Step 5: OFFLINE analysis (decode + normalized cross-correlation) ----
+async function decodeToMono(arrayBuffer) {
+  const ctx = new (window.AudioContext || window.webkitAudioContext)();
+  const audioBuffer = await ctx.decodeAudioData(arrayBuffer.slice(0));
+  const ch0 = audioBuffer.getChannelData(0);
+  ctx.close();
+  return { data: ch0, sampleRate: audioBuffer.sampleRate };
+}
+
+function normalizedCrossCorrelation(a, b, maxLagSamples) {
+  // Returns { bestLag, bestCorr } searching lag in [-maxLag, +maxLag]
+  const len = Math.min(a.length, b.length);
+  const meanA = a.slice(0, len).reduce((s, v) => s + v, 0) / len;
+  const meanB = b.slice(0, len).reduce((s, v) => s + v, 0) / len;
+
+  let bestCorr = -Infinity, bestLag = 0;
+  const step = Math.max(1, Math.floor(maxLagSamples / 200)); // coarse search for speed
+
+  for (let lag = -maxLagSamples; lag <= maxLagSamples; lag += step) {
+    let num = 0, denA = 0, denB = 0;
+    const start = Math.max(0, -lag);
+    const end = Math.min(len, len - lag);
+    for (let i = start; i < end; i += 4) { // subsample for speed
+      const va = a[i] - meanA;
+      const vb = b[i + lag] - meanB;
+      num += va * vb;
+      denA += va * va;
+      denB += vb * vb;
+    }
+    const denom = Math.sqrt(denA * denB) || 1e-9;
+    const corr = num / denom;
+    if (corr > bestCorr) { bestCorr = corr; bestLag = lag; }
+  }
+  return { bestLag, bestCorr };
+}
+
+$('analyzeBtn').addEventListener('click', async () => {
+  const resultDiv = $('analysisResult');
+  resultDiv.innerHTML = '<div class="status">מנתח...</div>';
+
+  try {
+    const take1 = await decodeToMono(recordings[1]);
+    const take2 = await decodeToMono(recordings[2]);
+
+    const maxLagMs = 50;
+    const maxLagSamples = Math.floor(take1.sampleRate * maxLagMs / 1000);
+
+    const { bestLag, bestCorr } = normalizedCrossCorrelation(take1.data, take2.data, maxLagSamples);
+    const lagMs = (bestLag / take1.sampleRate * 1000).toFixed(1);
+
+    const isConsistent = bestCorr > 0.7;
+
+    resultDiv.innerHTML = `
+      <div class="result ${isConsistent ? '' : 'bad'}">
+        <div>מתאם (correlation) בין הקלטה 1 להקלטה 2: <span class="metric">${bestCorr.toFixed(3)}</span></div>
+        <div>הזזה אופטימלית: ${lagMs} ms</div>
+        <div style="margin-top:8px">
+          ${isConsistent
+            ? '✓ מתאם גבוה - הזליגה נראית עקבית/דטרמיניסטית. שווה לבנות פילטר קבוע (fixed-template subtraction) שמחסיר אותה.'
+            : '⚠ מתאם נמוך - הזליגה לא עקבית בין שתי ההרצות, או שיש רעש/תזוזה משמעותית. כדאי לחזור על הניסוי בתנאים נקיים יותר (בלי תנועה, בלי רעש רקע) לפני מסקנות.'}
+        </div>
+      </div>
+    `;
+  } catch (err) {
+    resultDiv.innerHTML = `<div class="result bad">שגיאת ניתוח: ${err.message}</div>`;
+  }
+});
+</script>
+</body>
+</html>
