@@ -68,7 +68,8 @@
 <body>
 
 <div class="banner">
-  🧪 כלי בדיקה זמני - לא חלק מהמוצר. מטרתו לבדוק אם הזליגה הפנימית עקבית. אפשר למחוק בסיום הניסוי.
+  🧪 כלי בדיקה זמני - לא חלק מהמוצר. מטרתו לבדוק אם הזליגה הפנימית עקבית. אפשר למחוק בסיום הניסוי.<br>
+  <b>גרסה זו:</b> מיקרופון גולמי - echo cancellation / noise suppression / auto gain כבויים במפורש, כדי שעיבוד אוטומטי של הדפדפן לא יסתיר זליגה אמיתית.
 </div>
 
 <h1>בדיקת זליגה פנימית - Laylo</h1>
@@ -157,7 +158,20 @@ document.getElementById('guideFile').addEventListener('change', async (e) => {
 // ---- Step 2: request mic BEFORE any playback (hard rule) ----
 $('micBtn').addEventListener('click', async () => {
   try {
-    micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    // IMPORTANT: explicitly disable browser-side audio processing.
+    // By default, getUserMedia enables echoCancellation/noiseSuppression/
+    // autoGainControl - and echoCancellation in particular is designed to
+    // detect + remove correlation between played audio and mic input,
+    // which is EXACTLY what this test is trying to measure. Without
+    // disabling it, a "no leak" result could just mean "the browser
+    // already cancelled it before we could measure it."
+    micStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false
+      }
+    });
     $('micStatus').textContent = 'מיקרופון אושר ✓';
     $('step3').classList.remove('disabled');
     $('globalStatus').textContent = 'שלב 3: הקלטה 1 (שקט)';
